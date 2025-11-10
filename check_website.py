@@ -1,4 +1,4 @@
-import reuests
+import requests
 from bs4 import BeautifulSoup
 import hashlib
 import os
