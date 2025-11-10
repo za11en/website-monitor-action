@@ -1,0 +1,93 @@
+name: Website Job Monitor
+
+on:
+  schedule:
+    # Run once every day at midnight UTC
+    # You can adjust this cron schedule if you want a different frequency:
+    # For example, '0 */6 * * *' for every 6 hours
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    # Allows manual triggering of the workflow from the GitHub UI
+
+env:
+  RECIPIENT_EMAIL: Zack.allinson@gmail.com # Your email where notifications will be sent
+  URL_TO_MONITOR: https://www.stirling-rawdon.com/business-development/careers/ # The URL to monitor
+
+jobs:
+  monitor_website:
+    runs-on: ubuntu-latest
+
+    # Steps define the sequence of commands and actions to run
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3 # Action to clone your repository
+
+    - name: Set up Python
+      uses: actions/setup-python@v4 # Action to install Python on the runner
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: pip install requests beautifulsoup4 # Install Python libraries
+
+    - name: Get last recorded hash (if exists)
+      id: get_last_hash # Assign an ID to this step to reference its outputs
+      run: |
+        LAST_HASH=""
+        if [ -f "last_hash.txt" ]; then
+          LAST_HASH=$(cat last_hash.txt)
+        fi
+        echo "Last recorded hash: $LAST_HASH"
+        echo "::set-output name=last_hash::$LAST_HASH" # Make hash available to other steps
+
+    - name: Run website check script
+      id: check_script # Assign an ID to this step
+      env:
+        # Pass GitHub Secrets as environment variables to the Python script
+        EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+        EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+      run: python check_website.py # Execute your Python script
+
+    - name: Compare hashes and notify
+      # This step will ONLY run if the current hash is different from the last hash
+      if: steps.check_script.outputs.current_hash != steps.get_last_hash.outputs.last_hash
+      run: |
+        echo "Website content has changed! Sending notification."
+        # Use a small embedded Python script here to send the email
+        # This is done directly in YAML to keep the main Python script focused
+        python -c "import os, smtplib; from email.mime.text import MIMEText; from email.mime.multipart import MIMEMultipart; \
+        msg = MIMEMultipart(); \
+        msg['From'] = os.environ.get('EMAIL_USERNAME'); \
+        msg['To'] = os.environ.get('RECIPIENT_EMAIL'); \
+        msg['Subject'] = 'GitHub Action: Website Job Opportunities Updated!'; \
+        msg.attach(MIMEText('The job opportunities section on ${{ env.URL_TO_MONITOR }} has been updated. Please check the page: ${{ env.URL_TO_MONITOR }}', 'plain')); \
+        \
+        try: \
+            with smtplib.SMTP('smtp.gmail.com', 587) as server: \
+                server.starttls(); \
+                server.login(os.environ.get('EMAIL_USERNAME'), os.environ.get('EMAIL_APP_PASSWORD')); \
+                server.send_message(msg); \
+            print('Notification email sent!'); \
+        except Exception as e: \
+            print(f'Error sending notification email: {e}');"
+      env:
+        # Pass secrets and env vars required for email sending to this embedded script
+        EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+        EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+        RECIPIENT_EMAIL: ${{ env.RECIPIENT_EMAIL }}
+        URL_TO_MONITOR: ${{ env.URL_TO_MONITOR }}
+
+    - name: Update last recorded hash
+      # This step also only runs if a change was detected
+      if: steps.check_script.outputs.current_hash != steps.get_last_hash.outputs.last_hash
+      run: echo "${{ steps.check_script.outputs.current_hash }}" > last_hash.txt
+
+    - name: Commit new hash if changed
+      # Uses a third-party action to commit the updated 'last_hash.txt' back to the repo
+      # This is how the action remembers the last state of the page.
+      if: steps.check_script.outputs.current_hash != steps.get_last_hash.outputs.last_hash
+      uses: EndBug/add-and-commit@v9
+      with:
+        message: 'Automated: Update last known website content hash'
+        add: 'last_hash.txt' # The file to commit
+        default_author: github_actions # Author for the commit
