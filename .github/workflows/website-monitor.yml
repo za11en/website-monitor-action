@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  # Removed RECIPIENT_EMAIL from here
-  URL_TO_MONITOR: https://www.stirling-rawdon.com/business-development/careers/
+  # No email-related recipient or sender emails needed here anymore!
+  URL_TO_MONITOR: https://www.stirling-rawdon.com/business-development/careers/ # The URL to monitor
+  ISSUE_TITLE: "Website Job Opportunities Updated!" # Title for the GitHub Issue
 
 jobs:
   monitor_website:
@@ -37,36 +38,37 @@ jobs:
 
     - name: Run website check script
       id: check_script
-      env:
-        EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
-        EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-        # RECIPIENT_EMAIL is not needed by this script anymore, but we'll put it in secrets.
+      # No email secrets passed here anymore
       run: python check_website.py
 
-    - name: Compare hashes and notify
+    - name: Create or Update GitHub Issue
+      # This step will ONLY run if the current hash is different from the last hash
       if: steps.check_script.outputs.current_hash != steps.get_last_hash.outputs.last_hash
-      run: |
-        echo "Website content has changed! Sending notification."
-        python -c "import os, smtplib; from email.mime.text import MIMEText; from email.mime.multipart import MIMEMultipart; \
-        msg = MIMEMultipart(); \
-        msg['From'] = os.environ.get('EMAIL_USERNAME'); \
-        msg['To'] = os.environ.get('RECIPIENT_EMAIL'); \
-        msg['Subject'] = 'GitHub Action: Website Job Opportunities Updated!'; \
-        msg.attach(MIMEText('The job opportunities section on ${{ env.URL_TO_MONITOR }} has been updated. Please check the page: ${{ env.URL_TO_MONITOR }}', 'plain')); \
-        \
-        try: \
-            with smtplib.SMTP('smtp.gmail.com', 587) as server: \
-                server.starttls(); \
-                server.login(os.environ.get('EMAIL_USERNAME'), os.environ.get('EMAIL_APP_PASSWORD')); \
-                server.send_message(msg); \
-            print('Notification email sent!'); \
-        except Exception as e: \
-            print(f'Error sending notification email: {e}');"
-      env:
-        EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
-        EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-        RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # <-- CHANGED: Now pulling from secrets
-        URL_TO_MONITOR: ${{ env.URL_TO_MONITOR }}
+      uses: peter-evans/create-or-update-comment@v2 # Action to create/update an issue comment
+      # OR use 'peter-evans/create-or-update-issue@v4' to create a new issue each time
+
+      with:
+        # We'll create a new issue for each change for clarity.
+        # If you prefer to update an existing issue or comment on one,
+        # you'd use a different Peter Evans action or specific parameters.
+        token: ${{ secrets.GITHUB_TOKEN }} # Built-in token with permissions for repo
+        issue-title: ${{ env.ISSUE_TITLE }}
+        body: |
+          The job opportunities section on [${{ env.URL_TO_MONITOR }}](${{ env.URL_TO_MONITOR }}) has been updated!
+          
+          **Check the page for details.**
+          
+          _This notification was generated automatically by the Website Job Monitor Action._
+        labels: |
+          notification
+          website-update
+        assignees: ${{ github.actor }} # Assign the issue to the person who triggered the workflow (or just 'github.actor')
+        # If you want to update an existing issue instead of creating a new one:
+        # issue-number: 1 # Replace with the actual issue number you want to update
+        # update-issue: true
+        # comment-author: 'github-actions[bot]' # To make the bot comment
+        # body: | # Body for the comment
+        #   Another update detected for [${{ env.URL_TO_MONITOR }}](${{ env.URL_TO_MONITOR }}).
 
     - name: Update last recorded hash
       if: steps.check_script.outputs.current_hash != steps.get_last_hash.outputs.last_hash
